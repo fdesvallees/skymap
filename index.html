@@ -1,104 +1,50 @@
 <!DOCTYPE html>
-<meta charset="utf-8">
-<html lang="en">
-  <head>
-    <meta charset="utf-8">
-    <title>Sky Map</title>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html;charset=utf-8"/>
+<script src="https://d3js.org/d3.v4.min.js"></script>
+<script src="https://d3js.org/topojson.v2.min.js"></script>
 
-<style>
+<script src="euler_quaternion.js"></script>
 
-row {
-  font:sans-serif;
+<style type="text/css">
+
+.constellation {
+  fill: none;
+  stroke: #444;
+  stroke-width: .5px;
 }
-
-div#map {
-  width: 80%;
-  float: left;
-}
-
-div#inputform{
-margin-left: 80%;
-font: sans-serif;
-}
-
-section {
-    width: 100%;
-}
-
-
-.foreground {
+.stroke {
   fill: none;
   stroke: #000;
-  stroke-width: 1px;
-  pointer-events: all;
+  stroke-width: 3px;
 }
-
-.foreground.zooming {
-  cursor: -webkit-grab;
-  cursor: -moz-grab;
-}
-
 .graticule {
   fill: none;
-  stroke: #636B62;
+  stroke: #777;
   stroke-width: .5px;
-  stroke-dasharray: 2,2;
+  stroke-opacity: .5;
 }
-
-.ecliptic {
-  fill: none;
-  stroke: #636B62;
-  stroke-width: .5px;
-}
-
-.mesh {
-  stroke: #50576A;
-  stroke-width: .5px;
-  fill: none;
-}
-
-.point {
-  fill: #f00;
-}
-
 .boundary {
   fill: none;
   stroke: #444;
   stroke-width: .5px;
   stroke-dasharray: 4,4;
 }
-
-.constellation {
-  fill: none;
-  stroke: #000;
-  stroke-width: .5px;
-}
-
 .star {
   fill: #000;
   cursor: pointer;
 }
-
-.planet {
-  fill: #f00;
-  cursor: pointer;
-}
-
 .skytiles {
   fill: none;
   opacity:0;
-  stroke: #636B62;
+  stroke: #000;
   stroke-width: .5px;
 }
-
-
-.label{
-  fill:#00F;
-  font: 12px sans-serif;
-  text-anchor: start;
-  alignment-baseline: text-after-edge;
+skytiles.hover
+{
+  fill: #eee;
 }
-
 div.tooltip {
     position: absolute;
     text-align: center;
@@ -114,147 +60,96 @@ div.tooltip {
 </style>
 </head>
 
-
 <body>
-<section>
-
-<div id="map"></div>
-
-
-</section>
+<script>
 
 
 
-    <script src="http://d3js.org/d3.v3.min.js"></script>
-    <script src="http://d3js.org/d3.geo.projection.v0.min.js"></script>
-    <script src="http://d3js.org/topojson.v1.min.js"></script>
-    <script src="d3/d3.geo.zoom.js"></script>
-    <script src="js/geojson.min.js"></script>
-    <script src="ephemeris/util.js"></script>
-    <script src="ephemeris/datetime.js"></script>
-    <script src="ephemeris/observer.js"></script>   
-    <script src="ephemeris/planets.js"></script>
-    <script src="ephemeris/math.js"></script>
-    <script src="http://d3js.org/queue.v1.min.js"></script>
-   <script src="js/dat.gui.min.js"></script>
-   <script type="text/javascript">
-"use strict";
+var width = window.innerWidth - 50;
+var height = window.innerHeight - 50;
+var initialScale = 750;
+var scale = initialScale;
+var maxZoom = 25;
+var detailThreshold = 5;  // when we load detailed maps
+var minScale = initialScale, maxScale = initialScale * maxZoom;
+var detailedMode = 0;
 
-var degrees = 180 / Math.PI;
 
-var width = window.innerWidth - 100;
-var height = window.innerHeight - 100;
-var minScale = 240, maxScale = 9600;
+var minMag = d3.scaleLinear()    // smallest visible stars as a function of scale
+    .domain([minScale, maxScale])
+    .range([6, 12]);
 
-var tileSet = d3.set([]); 
+var maxDiameter = d3.scaleLinear()    // biggest star diameter as a function of scale
+    .domain([minScale, maxScale])
+    .range([.2, .6]);
 
-var svg = d3.selectAll("#map")
-    .append("svg")
+var Radius = d3.scaleLinear()      // circle diameter as a function of magnitude
+    .domain([-2, 12])
+    .range([10, 0]);
+
+var graticule = d3.geoGraticule();
+
+
+// In the sky, west is right and east is left - need to reverse lambda
+
+
+function skyStereographicRaw(λ, φ) {
+  var cosφ = Math.cos(φ), k = 1 + Math.cos(-λ) * cosφ;
+  return [cosφ * Math.sin(-λ) / k, Math.sin(φ) / k];
+}
+
+function skyStereographicInvert(x, y) {
+    var z = Math.sqrt(x * x + y * y),
+        c = 2 * Math.atan(z),
+        sc = Math.sin(c),
+        cc = Math.cos(c);
+    return [
+      -Math.atan2(x * sc, z * cc),
+      Math.asin(z && y * sc / z)
+    ];
+}
+
+
+skyStereographicRaw.invert = skyStereographicInvert;
+
+
+
+
+//var projection = d3.geoStereographic()
+var projection = d3.geoProjection(skyStereographicRaw)
+    .scale(scale)
+    .translate([width / 2, height / 2])
+    .clipAngle(90)
+    .clipExtent([[0,0],[width,height]]);
+
+var path = d3.geoPath()
+    .projection(projection);
+
+var svg = d3.select("body").append("svg")
     .attr("width", width)
     .attr("height", height);
 
-var projection = myProjection(width, height)
-    .scale(width / 5)
-    .translate([width / 2, height / 2]);
 
-var path = d3.geo.path().projection(projection);
+svg.append("path")
+    .datum(graticule)
+    .attr("class", "graticule")
+    .attr("d", path);
 
-var minMag = d3.scale.linear()    // smallest visible stars as a function of scale
-    .domain([minScale, maxScale])
-    .range([5, 12]);
+var drag = d3.drag()
+      .on("start", dragstarted)
+      .on("drag", dragged)
+      .on("end", dragended);
 
-var maxDiameter = d3.scale.linear()    // biggest star diameter as a function of scale
-    .domain([minScale, maxScale])
-    .range([.2, 1]);
-
-var Radius = d3.scale.linear()      // circle diameter as a function of magnitude
-    .domain([-2, 10])
-    .range([10, 0]);
+svg.call(drag);
+svg.call(d3.zoom().on("zoom", zoomFunction));
 
 
-var displayParameters = function()
-{
-  this.graticule = true;
-  this.stars = true;
-  this.lines = true;
-  this.boundaries = true;
-  this.planets = true;
-  this.ecliptic = true;
-  this.labels = false;
-}
-    
-var viewParameters = function()
-{
+var gpos0, o0;
 
-}
-
-viewParameters.prototype.save = function()
-{
-  var vp = {};
-  vp.scale = projection.scale();
-  vp.translate = projection.translate();
-  vp.rotate = projection.rotate();
-
-  localStorage.viewParameters = JSON.stringify(vp);
-}
-
-viewParameters.prototype.restore = function()
-{
-  var vp = JSON.parse(localStorage.viewParameters); 
-  projection.scale(vp.scale);
-  projection.translate(vp.translate);
-  projection.rotate(vp.rotate);
-}
-
-var detailedMode = 0;   // when true, we display detailed zones
-
-// Define the div for the tooltip
-var div = d3.select("body").append("div")
-    .attr("class", "tooltip")
-    .style("opacity", 0);
-
-// User interface
-var dp = new displayParameters();
-var vp = new viewParameters();
-var gui = new dat.GUI();
-
-var f1 = gui.addFolder('Display');
-
-f1.add(dp, "graticule").onChange(function(newValue){redraw();});
-f1.add(dp, "stars").onChange(function(newValue){redraw();});
-f1.add(dp, "lines").onChange(function(newValue){redraw();});
-f1.add(dp, "boundaries").onChange(function(newValue){redraw();});
-f1.add(dp, "planets").onChange(function(newValue){redraw();});
-f1.add(dp, "ecliptic").onChange(function(newValue){redraw();});
-f1.add(dp, "labels").onChange(function(newValue){redraw();});
-
-var f2 = gui.addFolder('View');
-
-
-var saveButton = { save:function()
-  { 
-	  vp.save()
-  }
-};
-f2.add(saveButton,'save');
-
-var restoreButton = { restore:function()
-  { 
-	  vp.restore()
-    redraw();
-  }
-};
-f2.add(restoreButton,'restore');
-
-
-
-
-drawMap (svg, path, true);
 
 // Cannot use d3 scale with variable range
 function radius(mag)
-{  
-  var scale = projection.scale();
+{
   if (mag > minMag(scale))
   {
     return (0);
@@ -262,315 +157,73 @@ function radius(mag)
   return (maxDiameter(scale) * Radius(mag));
 }
 
-function isVisible(element)
-{
-  var box = path.bounds(element);
-  if (box[0][0] == Infinity) return (0);
-  if (box[0][1] == Infinity) return (0);
-  if (box[1][0] == Infinity) return (0);
-  if (box[1][1] == Infinity) return (0);
-  return (1);
-}
-
-function displayStarArray(zoneName)
-{
-  if (dp.stars)
-    svg.select("#" + zoneName).style('opacity', 0xff);
-  else
-    svg.select("#" + zoneName).style('opacity', 0);
-
-  svg.select("#" + zoneName).selectAll(".star")
-  .attr("d", path.pointRadius(function(d) {
-    if (typeof(d.properties) != "undefined")
-        return (radius(d.properties.mag));
-    else
-        return(null);  
-  }));
-}
-
-
-function loadStarArray(zoneName)
-{
-// Load small star array
-  d3.json("sky/" + zoneName + ".json", function(error, stars) {
-      var g3 = svg.append("g").attr("id", zoneName)
-      .selectAll(zoneName)    
-      .data(stars.features)
-      .enter().append("path")
-      .attr("class", "star");
-      svg.append("text").attr("id", "stardata");
-
-       g3.on("mouseover", function(d) {
-            div.transition()
-                .duration(200)
-                .style("opacity", .9);
-            div .html( starText(d))
-                .style("left", (d3.event.pageX) + "px")
-                .style("top", (d3.event.pageY - 28) + "px");
-            })
-      .on("mouseout", function(d) {
-            div.transition()
-                .duration(500)
-                .style("opacity", 0);
-        });
-
-      displayStarArray(zoneName);
-      lock--;
-    });
-
-}
-
-function unloadStarArray(zoneName)
-{
-  svg.selectAll("#" + zoneName).remove();    
-}
-
-var lock = 0;
-
-function updateTileSet()
-{
-  if (detailedMode)
-  {
-    var newSet = d3.set([]);
-
-    svg.selectAll(".skytiles")
-    .each(function(d, i){
-        if (isVisible(d)){
-          newSet.add(d.id);
-      }});
-
-    // unload removed tiles, load new ones
-    tileSet.forEach(function(d){
-     if (!(newSet.has(d))) {
-       tileSet.remove(d)
-       unloadStarArray(d);
-      }
-    })
-    newSet.forEach(function(d){
-      if (!(tileSet.has(d))){
-        tileSet.add(d);
-        lock++;
-        loadStarArray(d);
-      }
-   });
- 
-    tileSet.forEach(function(d){
-      displayStarArray(d);
-    });
-  }
-}
-
-function enterDetailedMode()
-{
-  detailedMode = 1;
-}
-
-function exitDetailedMode()
-{
-  detailedMode = 0;
-  tileSet.forEach(function(d){
-    tileSet.remove(d)
-    unloadStarArray(d);
-  })
-}
-
-function displaySmallStars()
-{
-  if (detailedMode)
-  {
-    if (projection.scale() < 1000)
-    {
-      exitDetailedMode();
-    }
-  }
-  else
-  {
-    if (projection.scale() >= 1000)
-    {
-      enterDetailedMode();
-    }
-  }
-  updateTileSet();
-}
-
-
-function drawElement(element, condition)
-{
-  if (condition)
-  {
-    svg.select(element).style('opacity',0xff);
-    svg.select(element).attr("d", path);
-  }
-  else
-  {
-      svg.select(element).style('opacity',0);
-  }
-}
-
 function starText(d)
 {
-  var txt = ("HD" + d.id + ' ' + d.properties.name + ' ' + d.properties.constellation); 
+  var txt = ("HD" + d.id + ' ' + d.properties.name + ' ' + d.properties.constellation);
   return txt;
 }
 
-function redraw()
+
+
+
+function dragstarted()
 {
-  if (lock > 0)
-  {
-    return;
-  }
+  var xy = d3.mouse(this);
+  gpos0 = projection.invert(xy);
+  o0 = projection.rotate();
+  redraw();
+}
 
- 
-  svg.select(".foreground").attr("d", path);
-  drawElement(".graticule", dp.graticule);
-  drawElement(".boundary", dp.boundaries);
-  drawElement(".constellation", dp.lines);
-  drawElement(".ecliptic", dp.ecliptic);
+function dragged(){
 
-  if (dp.stars)
-  {
-    svg.select("#g1").style('opacity', 0xff);
-  }
-  else
-  {
-    svg.select("#g1").style('opacity', 0);
-  }
+  var xy = d3.mouse(this);
+  var gpos1 = projection.invert(xy);
 
- 
-  svg.select("#g1").selectAll(".star")
-  .attr("d", path.pointRadius(function(d) {
-    if (typeof(d.properties) != "undefined")  // BUG properties are undefined when star is outside viewport
-        return (radius(d.properties.mag));
-    else
-        return(null);  
-  }));
+  o0 = projection.rotate();
 
-  if (dp.planets)
-  {    
-    svg.select("#g2").style('opacity', 0xff);
-  }
-  else
-  {
-    svg.select("#g2").style('opacity', 0);
-  }
+  var o1 = eulerAngles(gpos0, gpos1, o0);
+  projection.rotate(o1);
 
-   svg.select("#g2").selectAll(".planet")
-    .attr("d", path.pointRadius(function(d) {
-      if (typeof(d.properties) != "undefined")  // BUG same as above 
-          return (radius(d.properties.mag));
-      else
-          return(null);  
-  }));
+  redraw();
 
-  if (dp.stars)
-  {
-    svg.select("#g3").style('opacity', 0xff);
-  }
-  else
-  {
-    svg.select("#g3").style('opacity', 0);
-  }
-  
-  if (dp.labels)
-  {
-    svg.select("#g5").selectAll(".label")
-     .style('opacity', 0xff)
-     .attr("transform", function(d) { return "translate(" + projection(d.geometry.coordinates) + ")"; });
-    svg.select("#g6").selectAll(".label")
-     .style('opacity', 0xff)
-     .attr("transform", function(d) { return "translate(" + projection(d.geometry.coordinates) + ")"; });
-  }
-  else
-  {
-    svg.select("#g5").selectAll(".label")
-     .style('opacity', 0);
-    svg.select("#g6").selectAll(".label")
-     .style('opacity', 0);
-  }
+}
 
-  displaySmallStars();
-} 
+function dragended()
+{
+  redraw();
+}
+
+// Main program
+// Define the div for the tooltip
+var div = d3.select("body").append("div")
+    .attr("class", "tooltip")
+    .style("opacity", 0);
 
 
+d3.json("constellations.json", function(error, constellations)
+{
+  if (error) throw error;
 
-
-svg.selectAll(".foreground")
-    .call(d3.geo.zoom().projection(projection)
-      .scaleExtent([projection.scale() * 1, projection.scale() * 40])
-      .on("zoom.redraw", function() {
-      	d3.select("#stardata").text('');	// erase labels before zooming / panning
-      	d3.select("#planetdata").text('');
-        redraw();
-      }));
-
-
-// Load constellation boundaries
-d3.json("sky/boundaries.json", function(error, boundaries) {
-      d3.selectAll("svg").insert("path") 
-      .datum(topojson.feature(boundaries, boundaries.objects.boundaries))
-      .attr("class", "boundary")   
- });
-
-// Load constellation lines
-d3.json("sky/constellations.json", function(error, constellations) {
-      d3.selectAll("svg").insert("path") 
-      .datum(topojson.feature(constellations, constellations.objects.constellations))
-      .attr("class", "constellation")   
- });
-
-// Load ecliptic
-d3.json("sky/ecliptic.json", function(error, ecliptic) {
-      d3.selectAll("svg").insert("path") 
-      .datum(topojson.feature(ecliptic, ecliptic.objects.ecliptic))
-      .attr("class", "ecliptic")   
- });
-
-
-// Load planet array
-var pa = jsonPlanets(observer);
-var g2 = svg.append("g").attr("id", "g2")
-      .selectAll("#g2")    
-      .data(pa.features)
+  var g2 = svg.append("g").attr("id", "g2")
+      .selectAll("#g2")
+      .data(topojson.feature(constellations, constellations.objects.constellations).features)
       .enter().append("path")
-      .attr("class", "planet");
+      .attr("class", "constellation")
+      .attr("d", path);
+});
 
-var g5 = svg.append("g").attr("id", "g5")
-      .selectAll("#g5")
-      .data(pa.features)
-      .enter().append("text")
-      .attr("class", "label")
-      .text(function(d){ return (d.properties.name)});
+// Load stars
+d3.json("stars.json", function(error, stars)
+{
+  if (error) throw error;
 
-     g2.on("mouseover", function(d) {
-            div.transition()
-                .duration(200)
-                .style("opacity", .9);
-            div .html( d.properties.name)
-                .style("left", (d3.event.pageX) + "px")
-                .style("top", (d3.event.pageY - 28) + "px");
-            })
-      .on("mouseout", function(d) {
-            div.transition()
-                .duration(500)
-                .style("opacity", 0);
-       });
-     
-
-// Load star array
-d3.json("sky/stars.json", function(error, stars) {
   var g1 = svg.append("g").attr("id", "g1")
-      .selectAll("#g1")    
+      .selectAll("#g1")
       .data(stars.features)
       .enter().append("path")
-      .attr("class", "star");
-      svg.append("text").attr("id", "stardata");
-
-var g6 = svg.append("g").attr("id", "g6")
-      .selectAll("#g6")
-      .data(stars.features)
-      .enter().append("text")
-      .attr("class", "label")
-      .text(function(d){ return (d.properties.name)});
+      .attr("class", "star")
+      .attr("id", "stardata")
+      .attr("d", path);
 
        g1.on("mouseover", function(d) {
             div.transition()
@@ -585,67 +238,42 @@ var g6 = svg.append("g").attr("id", "g6")
                 .duration(500)
                 .style("opacity", 0);
         });
-    
-      redraw();
- });
-
-// Load tiles
-d3.json("sky/skytiles.json", function(error, skytiles) {
-      var g4 = svg.append("g").attr("id", "g4")
-      .selectAll("#g4") 
-      .data(topojson.feature(skytiles, skytiles.objects.skytiles).features)
-      .enter().append("path")
-      .attr("class", "skytiles");  
-      g4.append("title")
-      .text(function(d) { return d.id; });
-      svg.select("#g4").selectAll(".skytiles")
-      .attr("d", path);
-  
- });
 
 
+});
+
+// set star radius
+ svg.select("#g1").selectAll(".star")
+  .attr("d", path.pointRadius(function(d) {
+    if (typeof(d.properties) != "undefined")  // BUG properties are undefined when star is outside viewport
+        return (radius(d.properties.mag));
+    else
+        return(null);
+  }));
 
 
-
-function drawMap(svg, path, mousePoint) {
-  var projection = path.projection();
-
-  svg.append("path")
-      .datum(d3.geo.graticule())
-      .attr("class", "graticule");
-
-  svg.append("path")
-      .datum({type: "Sphere"})
-      .attr("class", "foreground")
-      .on("mousedown.grab", function() {
-      	d3.select("#stardata").text('');	// erase labels before zooming / panning
-      	d3.select("#planetdata").text('');
-        var point;
-        if (mousePoint) point = svg.insert("path", ".foreground")
-            .datum({type: "Point", coordinates: projection.invert(d3.mouse(this))})
-            .attr("class", "point")
-            .attr("d", path);
-        var path = d3.select(this).classed("zooming", true),
-            w = d3.select(window).on("mouseup.grab", function() {
-              path.classed("zooming", false);
-              w.on("mouseup.grab", null);
-              if (mousePoint) point.remove();
-            });
-      });
-       redraw();
+function redraw()
+{
+  svg.selectAll("path").attr("d", path);
 }
 
-function myProjection(width, height) {
-  return d3.geo.azimuthalEqualArea()
-      .precision(.5)
-      .clipAngle(90)
-      .clipExtent([[-1, -1], [width + 1, height + 1]])
-      .translate([width / 2, height / 2])
-      .scale(width / 2 - 10)
-      .rotate([0, -30]);
-}
-  </script>
 
+
+function zoomFunction()
+{
+  if (d3.event.transform.k > maxZoom)
+    d3.event.transform.k = maxZoom;
+
+  if (d3.event.transform.k < 1)
+    d3.event.transform.k = 1;
+
+  scale = initialScale * d3.event.transform.k;
+  projection.scale (scale);
+  redraw();
+}
+
+
+</script>
 
 </body>
 </html>
