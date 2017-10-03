@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html;charset=utf-8"/>
+<script src="https://d3js.org/d3.v4.min.js"></script>
+<script src="https://d3js.org/topojson.v2.min.js"></script>
+
+<script src="euler_quaternion.js"></script>
+
+<style type="text/css">
+
+.constellation {
+  fill: none;
+  stroke: #444;
+  stroke-width: .5px;
+}
+.stroke {
+  fill: none;
+  stroke: #000;
+  stroke-width: 3px;
+}
+.graticule {
+  fill: none;
+  stroke: #777;
+  stroke-width: .5px;
+  stroke-opacity: .5;
+}
+.boundary {
+  fill: none;
+  stroke: #444;
+  stroke-width: .5px;
+  stroke-dasharray: 4,4;
+}
+.star {
+  fill: #000;
+  cursor: pointer;
+}
+.skytiles {
+  fill: none;
+  opacity:0;
+  stroke: #000;
+  stroke-width: .5px;
+}
+skytiles.hover
+{
+  fill: #eee;
+}
+div.tooltip {
+    position: absolute;
+    text-align: center;
+    width: 60px;
+    height: 28px;
+    padding: 2px;
+    font: 12px sans-serif;
+    background: lightsteelblue;
+    border: 0px;
+    border-radius: 8px;
+    pointer-events: none;
+}
+</style>
+</head>
+
+<body>
+<script>
+
+
+
+var width = window.innerWidth - 50;
+var height = window.innerHeight - 50;
+var initialScale = 750;
+var scale = initialScale;
+var maxZoom = 25;
+var detailThreshold = 5;  // when we load detailed maps
+var minScale = initialScale, maxScale = initialScale * maxZoom;
+var detailedMode = 0;
+
+
+var minMag = d3.scaleLinear()    // smallest visible stars as a function of scale
+    .domain([minScale, maxScale])
+    .range([6, 12]);
+
+var maxDiameter = d3.scaleLinear()    // biggest star diameter as a function of scale
+    .domain([minScale, maxScale])
+    .range([.2, .6]);
+
+var Radius = d3.scaleLinear()      // circle diameter as a function of magnitude
+    .domain([-2, 12])
+    .range([10, 0]);
+
+var graticule = d3.geoGraticule();
+
+
+// In the sky, west is right and east is left - need to reverse lambda
+
+
+function skyStereographicRaw(λ, φ) {
+  var cosφ = Math.cos(φ), k = 1 + Math.cos(-λ) * cosφ;
+  return [cosφ * Math.sin(-λ) / k, Math.sin(φ) / k];
+}
+
+function skyStereographicInvert(x, y) {
+    var z = Math.sqrt(x * x + y * y),
+        c = 2 * Math.atan(z),
+        sc = Math.sin(c),
+        cc = Math.cos(c);
+    return [
+      -Math.atan2(x * sc, z * cc),
+      Math.asin(z && y * sc / z)
+    ];
+}
+
+
+skyStereographicRaw.invert = skyStereographicInvert;
+
+
+
+
+//var projection = d3.geoStereographic()
+var projection = d3.geoProjection(skyStereographicRaw)
+    .scale(scale)
+    .translate([width / 2, height / 2])
+    .clipAngle(90)
+    .clipExtent([[0,0],[width,height]]);
+
+var path = d3.geoPath()
+    .projection(projection);
+
+var svg = d3.select("body").append("svg")
+    .attr("width", width)
+    .attr("height", height);
+
+
+svg.append("path")
+    .datum(graticule)
+    .attr("class", "graticule")
+    .attr("d", path);
+
+var drag = d3.drag()
+      .on("start", dragstarted)
+      .on("drag", dragged)
+      .on("end", dragended);
+
+svg.call(drag);
+svg.call(d3.zoom().on("zoom", zoomFunction));
+
+
+var gpos0, o0;
+
+
+// Cannot use d3 scale with variable range
+function radius(mag)
+{
+  if (mag > minMag(scale))
+  {
+    return (0);
+  }
+  return (maxDiameter(scale) * Radius(mag));
+}
+
+function starText(d)
+{
+  var txt = ("HD" + d.id + ' ' + d.properties.name + ' ' + d.properties.constellation);
+  return txt;
+}
+
+
+
+
+function dragstarted()
+{
+  var xy = d3.mouse(this);
+  gpos0 = projection.invert(xy);
+  o0 = projection.rotate();
+  redraw();
+}
+
+function dragged(){
+
+  var xy = d3.mouse(this);
+  var gpos1 = projection.invert(xy);
+
+  o0 = projection.rotate();
+
+  var o1 = eulerAngles(gpos0, gpos1, o0);
+  projection.rotate(o1);
+
+  redraw();
+
+}
+
+function dragended()
+{
+  redraw();
+}
+
+// Main program
+// Define the div for the tooltip
+var div = d3.select("body").append("div")
+    .attr("class", "tooltip")
+    .style("opacity", 0);
+
+
+d3.json("constellations.json", function(error, constellations)
+{
+  if (error) throw error;
+
+  var g2 = svg.append("g").attr("id", "g2")
+      .selectAll("#g2")
+      .data(topojson.feature(constellations, constellations.objects.constellations).features)
+      .enter().append("path")
+      .attr("class", "constellation")
+      .attr("d", path);
+});
+
+// Load stars
+d3.json("stars.json", function(error, stars)
+{
+  if (error) throw error;
+
+  var g1 = svg.append("g").attr("id", "g1")
+      .selectAll("#g1")
+      .data(stars.features)
+      .enter().append("path")
+      .attr("class", "star")
+      .attr("id", "stardata")
+      .attr("d", path);
+
+       g1.on("mouseover", function(d) {
+            div.transition()
+                .duration(200)
+                .style("opacity", .9);
+            div .html( starText(d))
+                .style("left", (d3.event.pageX) + "px")
+                .style("top", (d3.event.pageY - 28) + "px");
+            })
+      .on("mouseout", function(d) {
+            div.transition()
+                .duration(500)
+                .style("opacity", 0);
+        });
+
+
+});
+
+// set star radius
+ svg.select("#g1").selectAll(".star")
+  .attr("d", path.pointRadius(function(d) {
+    if (typeof(d.properties) != "undefined")  // BUG properties are undefined when star is outside viewport
+        return (radius(d.properties.mag));
+    else
+        return(null);
+  }));
+
+
+function redraw()
+{
+  svg.selectAll("path").attr("d", path);
+}
+
+
+
+function zoomFunction()
+{
+  if (d3.event.transform.k > maxZoom)
+    d3.event.transform.k = maxZoom;
+
+  if (d3.event.transform.k < 1)
+    d3.event.transform.k = 1;
+
+  scale = initialScale * d3.event.transform.k;
+  projection.scale (scale);
+  redraw();
+}
+
+
+</script>
+
+</body>
+</html>
