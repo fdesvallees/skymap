@@ -7,4 +7,8 @@ The constellation lines come from the PP3 program (http://pp3.sourceforge.net/)
 
 You can zoom and drag the map, and hovering over a star displays its Draper catalog number and Bayer designation if available.
 
+The limit of magnitude 5 is necessary to remove smaller stars when displaying a large area of the sky, and to reduce the memory requirements.
+The solution, of course, is to load smaller stars selectively (in tiles) when zooming.
+
+Another [http://astro.roya.org/stars_v4.html](version of this page) does just this. 
 
