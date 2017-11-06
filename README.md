@@ -10,5 +10,5 @@ You can zoom and drag the map, and hovering over a star displays its Draper cata
 The limit of magnitude 5 is necessary to remove smaller stars when displaying a large area of the sky, and to reduce the memory requirements.
 The solution, of course, is to load smaller stars selectively (in tiles) when zooming.
 
-Another [http://astro.roya.org/stars_v4.html](version of this page) does just this. 
+Another [http://astro.roya.org/projects/stars/](version of this page) does just this. 
 
