@@ -13,3 +13,4 @@ The solution, of course, is to load smaller stars selectively (in tiles) when zo
 Another version of this page (http://astro.roya.org/projects/stars/stars_v5.html) does just this. 
 
 testing new branch
+testing again
